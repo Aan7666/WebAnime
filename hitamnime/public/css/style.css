@@ -1725,6 +1725,41 @@ textarea {
    ========================================================================== */
 
 /* Nav button link & ikon profil */
+.api-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background-color: rgba(56, 189, 248, 0.1);
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--info);
+  padding: 0.35rem 0.75rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.api-pulse-dot {
+  width: 7px;
+  height: 7px;
+  background-color: var(--info);
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 6px var(--info);
+  animation: apiPulse 2s infinite ease-in-out;
+}
+
+@keyframes apiPulse {
+  0%, 100% {
+    transform: scale(0.9);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(1.25);
+    opacity: 1;
+  }
+}
+
 .nav-btn-link {
   background: none;
   border: none;

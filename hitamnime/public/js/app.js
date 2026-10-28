@@ -1,12 +1,15 @@
 /**
  * KuroStream - Platform Streaming Anime Legal Berbasis Iklan (Ad-Supported)
+ * Terintegrasi dengan Jikan API v4 (https://api.jikan.moe/v4/)
+ * 
  * Sesuai Dokumen PRD:
- * 1. Legalitas Konten & Lisensi (UU Hak Cipta No. 28 Tahun 2014)
- * 2. Pre-roll Video Ad Simulator & Display Banner Iklan
- * 3. Lanjutkan Menonton (Continue Watching) & Posisi Menit Tontonan Tersimpan
- * 4. Pemutar Adaptif dengan Kualitas (360p, 480p, 720p, 1080p) & Subtitle Terpisah
- * 5. Panel Admin Lisensi Konten & Formulir Takedown DMCA
- * 6. Kepatuhan Privasi & Cookie (UU PDP No. 27 Tahun 2022)
+ * 1. Integrasi API Publik Jikan v4 (Top Anime, Seasonal, Real-time Search, Metadata MAL)
+ * 2. Legalitas Konten & Lisensi (UU Hak Cipta No. 28 Tahun 2014)
+ * 3. Pre-roll Video Ad Simulator & Display Banner Iklan
+ * 4. Lanjutkan Menonton (Continue Watching) & Posisi Menit Tontonan Tersimpan
+ * 5. Pemutar Adaptif dengan Kualitas (360p, 480p, 720p, 1080p) & Subtitle Terpisah
+ * 6. Panel Admin Lisensi Konten & Formulir Takedown DMCA
+ * 7. Kepatuhan Privasi & Cookie (UU PDP No. 27 Tahun 2022)
  */
 
 // State Aplikasi Global
@@ -17,6 +20,7 @@ const state = {
   activeServer: 'Server 1 (HD)',
   activeQuality: localStorage.getItem('kuro_quality') || '720p',
   activeSubtitle: localStorage.getItem('kuro_subtitle') || 'id',
+  activePlayerMode: 'mp4', // 'mp4' atau 'trailer'
   bookmarks: JSON.parse(localStorage.getItem('anime_bookmarks') || '["frieren", "solo-leveling"]'),
   continueWatching: JSON.parse(localStorage.getItem('anime_continue_watching') || JSON.stringify([
     {
@@ -40,8 +44,13 @@ const state = {
     year: 'all',
     type: 'all',
     status: 'all',
+    source: 'all', // 'all', 'local', 'jikan'
     search: ''
   },
+  jikanTopAnime: [],
+  jikanSeasonalAnime: [],
+  jikanSearchResults: [],
+  isJikanLoading: false,
   adTimer: null,
   adSecondsLeft: 5,
   isAdActive: false
@@ -56,6 +65,9 @@ document.addEventListener('DOMContentLoaded', () => {
   populateTakedownAnimeSelect();
   initAdminModalData();
   handleRouteChange();
+
+  // Muat data dari Jikan API secara asinkron
+  loadJikanHomeData();
 });
 
 // Routing Berbasis Hash URL
@@ -89,8 +101,10 @@ function handleRouteChange() {
   } else if (state.currentRoute === 'catalog') {
     const genreParam = params.get('genre');
     const searchParam = params.get('q');
+    const sourceParam = params.get('source');
     if (genreParam) state.filters.genre = genreParam;
     if (searchParam) state.filters.search = searchParam;
+    if (sourceParam) state.filters.source = sourceParam;
     renderCatalogPage();
   } else {
     renderHomePage();
@@ -99,7 +113,7 @@ function handleRouteChange() {
 
 // Inisialisasi Event Global (Search, Mobile Menu, Modals)
 function initGlobalEvents() {
-  // Search input navbar
+  // Search input navbar (terintegrasi dengan Jikan API)
   const searchInput = document.getElementById('navbar-search-input');
   if (searchInput) {
     searchInput.addEventListener('keydown', (e) => {
@@ -214,6 +228,131 @@ function initCookieConsent() {
       showToast('Persetujuan privasi dan preferensi berhasil disimpan.');
     });
   }
+}
+
+// Integrasi Asinkron Jikan API v4
+async function loadJikanHomeData() {
+  if (state.jikanTopAnime.length > 0) return;
+
+  state.isJikanLoading = true;
+  updateJikanIndicatorStatus('loading');
+
+  try {
+    const [top, seasonal] = await Promise.all([
+      JikanService.getTopAnime(8),
+      JikanService.getSeasonalAnime(8)
+    ]);
+
+    state.jikanTopAnime = top || [];
+    state.jikanSeasonalAnime = seasonal || [];
+
+    updateJikanIndicatorStatus('online');
+
+    // Jika pengguna sedang berada di beranda, render grid Jikan secara instan
+    if (state.currentRoute === 'home') {
+      const topGrid = document.getElementById('jikan-top-grid');
+      if (topGrid) {
+        renderJikanGridContent(topGrid, state.jikanTopAnime);
+      }
+    }
+  } catch (err) {
+    console.warn('Jikan API error:', err);
+    updateJikanIndicatorStatus('offline');
+  } finally {
+    state.isJikanLoading = false;
+  }
+}
+
+function updateJikanIndicatorStatus(status) {
+  const pill = document.getElementById('api-status-indicator');
+  if (!pill) return;
+
+  if (status === 'online') {
+    pill.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+    pill.style.color = '#34d399';
+    pill.title = 'Jikan API v4: Terhubung Online (Live MyAnimeList)';
+    const dot = pill.querySelector('.api-pulse-dot');
+    if (dot) dot.style.backgroundColor = '#10b981';
+  } else if (status === 'loading') {
+    pill.title = 'Jikan API v4: Menghubungi Server...';
+  } else {
+    pill.style.borderColor = 'rgba(251, 191, 36, 0.4)';
+    pill.style.color = '#fbbf24';
+    pill.title = 'Jikan API v4: Mode Cache / Cadangan Aktif';
+    const dot = pill.querySelector('.api-pulse-dot');
+    if (dot) dot.style.backgroundColor = '#fbbf24';
+  }
+}
+
+function renderJikanGridContent(container, animeList) {
+  if (!animeList || animeList.length === 0) {
+    container.innerHTML = `
+      <div style="grid-column: 1 / -1; text-align: center; padding: 2rem; color: var(--text-muted);">
+        <p>Sedang memuat data dari Jikan API v4...</p>
+      </div>
+    `;
+    return;
+  }
+
+  container.innerHTML = animeList.map(anime => `
+    <article class="episode-card" onclick="openAnimeDetails('${anime.id}')">
+      <div class="thumbnail-wrapper">
+        <img src="${anime.poster}" alt="${anime.title}" class="episode-thumbnail" loading="lazy" />
+        <div class="thumbnail-overlay"></div>
+        <div class="episode-badge">MAL ID: ${anime.malId}</div>
+        <div class="duration-badge">${anime.totalEpisodes} Ep</div>
+
+        <div class="play-indicator">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="card-info">
+        <h3 class="card-title" title="${anime.title}">${anime.title}</h3>
+        <p class="card-ep-title">${anime.japaneseTitle}</p>
+        
+        <div class="card-footer-meta">
+          <span class="card-meta-item">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style="color: var(--star-rating);">
+              <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/>
+            </svg>
+            ${anime.rating}
+          </span>
+          <span class="card-meta-item">${anime.genres[0] || 'Anime'}</span>
+          <span class="card-meta-item" style="color: var(--info);" title="Data MyAnimeList Resmi">
+            Jikan v4
+          </span>
+        </div>
+      </div>
+    </article>
+  `).join('');
+}
+
+function openAnimeDetails(animeId) {
+  window.location.hash = `#watch?id=${animeId}&ep=1`;
+}
+
+// Pencarian Anime Global (Lokal + Jikan API)
+function findAnimeById(animeId) {
+  // Cek database lokal
+  let found = ANIME_DATABASE.find(a => a.id === animeId);
+  if (found) return found;
+
+  // Cek list top anime Jikan
+  found = state.jikanTopAnime.find(a => a.id === animeId);
+  if (found) return found;
+
+  // Cek list seasonal anime Jikan
+  found = state.jikanSeasonalAnime.find(a => a.id === animeId);
+  if (found) return found;
+
+  // Cek list hasil pencarian Jikan
+  found = state.jikanSearchResults.find(a => a.id === animeId);
+  if (found) return found;
+
+  return null;
 }
 
 // Modal Handlers
@@ -368,14 +507,14 @@ function updateDefaultSub(val) {
 }
 
 // ==========================================================================
-// 1. RENDER HOMEPAGE (PRD: Hero Banner, Lanjutkan Menonton, Rilis Terbaru)
+// 1. RENDER HOMEPAGE (PRD: Hero Banner, Lanjutkan Menonton, Rilis Terbaru & Jikan Top)
 // ==========================================================================
 function renderHomePage() {
   const container = document.getElementById('main-content');
   const featuredAnime = ANIME_DATABASE.find(a => a.isFeatured) || ANIME_DATABASE[0];
   const isBookmarked = state.bookmarks.includes(featuredAnime.id);
 
-  // Kumpulkan episode terbaru dari semua anime
+  // Kumpulkan episode terbaru dari database berlisensi
   const latestEpisodes = [];
   ANIME_DATABASE.forEach(anime => {
     if (anime.episodes && anime.episodes.length > 0) {
@@ -389,7 +528,7 @@ function renderHomePage() {
 
   // Data Lanjutkan Menonton (Continue Watching)
   const continueItems = state.continueWatching.map(item => {
-    const anime = ANIME_DATABASE.find(a => a.id === item.animeId);
+    const anime = findAnimeById(item.animeId);
     if (!anime) return null;
     const ep = anime.episodes.find(e => e.number === item.episodeNum) || anime.episodes[0];
     const percentage = Math.min(100, Math.round((item.currentTime / item.duration) * 100));
@@ -513,7 +652,7 @@ function renderHomePage() {
       </div>
     </aside>
 
-    <!-- Grid Episode Terbaru -->
+    <!-- Grid Episode Terbaru (Berlisensi Lokal) -->
     <section class="latest-section">
       <div class="section-header">
         <div>
@@ -561,28 +700,81 @@ function renderHomePage() {
         `).join('')}
       </div>
     </section>
+
+    <!-- Grid Data Jikan API v4: Tren Terpopuler Global MyAnimeList -->
+    <section class="latest-section" style="margin-top: 2.5rem;">
+      <div class="section-header">
+        <div>
+          <div style="display: flex; align-items: center; gap: 0.6rem;">
+            <h2 class="section-title">Tren Teratas Global (Jikan API v4)</h2>
+            <span class="api-status-pill">Live API</span>
+          </div>
+          <p class="section-subtitle">Data anime paling populer real-time diambil langsung dari endpoint Jikan API v4 (MyAnimeList).</p>
+        </div>
+        <a href="#catalog?source=jikan" class="btn-view-all">Jelajahi Jikan API</a>
+      </div>
+
+      <div class="episodes-grid" id="jikan-top-grid">
+        <!-- Konten diisi asinkron oleh renderJikanGridContent() -->
+      </div>
+    </section>
   `;
+
+  // Render list Jikan jika sudah ada dalam memori
+  const jikanGrid = document.getElementById('jikan-top-grid');
+  if (jikanGrid) {
+    if (state.jikanTopAnime.length > 0) {
+      renderJikanGridContent(jikanGrid, state.jikanTopAnime);
+    } else {
+      jikanGrid.innerHTML = `
+        <div style="grid-column: 1 / -1; text-align: center; padding: 2.5rem; color: var(--text-muted);">
+          <div class="api-pulse-dot" style="margin: 0 auto 0.75rem auto; width: 12px; height: 12px;"></div>
+          <p>Sedang menghubungkan dan mengambil data tren dari https://api.jikan.moe/v4/ ...</p>
+        </div>
+      `;
+      loadJikanHomeData();
+    }
+  }
 }
 
 // ==========================================================================
 // 2. RENDER WATCH PAGE (Player Video Adaptif, Pre-roll Ad, Subtitle, Lisensi)
 // ==========================================================================
-function renderWatchPage(animeId, epNum) {
+async function renderWatchPage(animeId, epNum) {
   const container = document.getElementById('main-content');
-  const anime = ANIME_DATABASE.find(a => a.id === animeId) || ANIME_DATABASE[0];
+  let anime = findAnimeById(animeId);
+
+  // Jika anime berasal dari Jikan tapi belum termuat di memori, coba fetch langsung
+  if (!anime && animeId.startsWith('mal_')) {
+    const malId = animeId.replace('mal_', '');
+    container.innerHTML = `
+      <div style="text-align: center; padding: 5rem 1rem; color: var(--text-muted);">
+        <div class="api-pulse-dot" style="margin: 0 auto 1rem auto; width: 14px; height: 14px;"></div>
+        <h3 style="color: var(--text-main); margin-bottom: 0.5rem;">Mengambil Detail Anime dari Jikan API...</h3>
+        <p style="font-size: 0.85rem;">MAL ID: ${malId}</p>
+      </div>
+    `;
+    anime = await JikanService.getAnimeById(malId);
+  }
+
+  // Fallback ke judul pertama jika masih tidak ditemukan
+  if (!anime) {
+    anime = ANIME_DATABASE[0];
+  }
+
   const currentEp = anime.episodes.find(e => e.number === epNum) || anime.episodes[0];
   const nextEp = anime.episodes.find(e => e.number === epNum + 1);
 
   state.activeAnimeId = anime.id;
   state.activeEpisodeNum = currentEp.number;
 
-  // Filter rekomendasi (anime lain)
+  // Filter rekomendasi
   const recommendations = ANIME_DATABASE.filter(a => a.id !== anime.id).slice(0, 4);
 
-  // Filter komentar spesifik anime ini
+  // Filter komentar
   const episodeComments = state.comments.filter(c => c.animeId === anime.id);
 
-  // Ambil posisi tonton sebelumnya jika ada
+  // Ambil posisi tonton sebelumnya
   const savedProgress = state.continueWatching.find(i => i.animeId === anime.id && i.episodeNum === currentEp.number);
   const hasResumeTime = savedProgress && savedProgress.currentTime > 10;
 
@@ -647,22 +839,46 @@ function renderWatchPage(animeId, epNum) {
             </div>
 
             <!-- Elemen Video Utama -->
-            <video 
-              id="html5-video" 
-              class="video-element" 
-              poster="${currentEp.thumbnail}" 
-              controls
-              onplay="handleVideoPlay('${anime.id}', ${currentEp.number})"
-              ontimeupdate="handleVideoTimeUpdate('${anime.id}', ${currentEp.number})"
-            >
-              <source src="${currentEp.videoSrc}" type="video/mp4">
-              Browser Anda tidak mendukung tag video HTML5.
-            </video>
+            ${anime.trailerEmbedUrl && state.activePlayerMode === 'trailer' ? `
+              <iframe 
+                src="${anime.trailerEmbedUrl}?autoplay=1" 
+                title="Trailer Resmi ${anime.title}" 
+                class="video-element" 
+                style="border: none;"
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                allowfullscreen
+              ></iframe>
+            ` : `
+              <video 
+                id="html5-video" 
+                class="video-element" 
+                poster="${currentEp.thumbnail}" 
+                controls
+                onplay="handleVideoPlay('${anime.id}', ${currentEp.number})"
+                ontimeupdate="handleVideoTimeUpdate('${anime.id}', ${currentEp.number})"
+              >
+                <source src="${currentEp.videoSrc}" type="video/mp4">
+                Browser Anda tidak mendukung tag video HTML5.
+              </video>
+            `}
           </div>
 
           <!-- Bar Pengaturan Pemutar (Kualitas Adaptif 360p-1080p, Subtitle, & Kecepatan) -->
           <div class="player-settings-bar">
             <div class="player-controls-left">
+              <!-- Mode Trailer vs Streaming -->
+              ${anime.trailerEmbedUrl ? `
+                <div class="player-control-group">
+                  <button 
+                    class="btn ${state.activePlayerMode === 'trailer' ? 'btn-primary' : 'btn-secondary'}" 
+                    style="min-height: 32px; padding: 0.25rem 0.65rem; font-size: 0.8rem;"
+                    onclick="togglePlayerTrailerMode('${anime.id}', ${currentEp.number})"
+                  >
+                    ${state.activePlayerMode === 'trailer' ? 'Kembali ke Player MP4' : 'Tonton Trailer MAL (Jikan)'}
+                  </button>
+                </div>
+              ` : ''}
+
               <!-- Pemilih Kualitas Video (PRD Kebutuhan Fungsional 1) -->
               <div class="player-control-group">
                 <label for="video-quality-select" style="font-size: 0.8rem; color: var(--text-muted);">Kualitas:</label>
@@ -871,8 +1087,19 @@ function renderWatchPage(animeId, epNum) {
     </div>
   `;
 
-  // Jalankan simulator iklan pre-roll saat halaman tonton dimuat
-  startPrerollAdSimulator();
+  // Jalankan simulator iklan pre-roll saat pemutar video MP4 aktif
+  if (state.activePlayerMode === 'mp4') {
+    startPrerollAdSimulator();
+  } else {
+    const overlay = document.getElementById('ad-preroll-layer');
+    if (overlay) overlay.classList.add('hidden');
+  }
+}
+
+function togglePlayerTrailerMode(animeId, epNum) {
+  state.activePlayerMode = state.activePlayerMode === 'mp4' ? 'trailer' : 'mp4';
+  renderWatchPage(animeId, epNum);
+  showToast(state.activePlayerMode === 'trailer' ? 'Memutar Trailer Resmi via MyAnimeList (Jikan API)' : 'Beralih ke Pemutar Video Episode');
 }
 
 // Simulasi Pre-roll Ad Video
@@ -972,8 +1199,7 @@ function toggleVideoFullscreen() {
 
 // Resume & Tracking Menit Nonton
 function handleVideoPlay(animeId, epNum) {
-  // Update recent continue watching item
-  const anime = ANIME_DATABASE.find(a => a.id === animeId);
+  const anime = findAnimeById(animeId);
   if (!anime) return;
   const ep = anime.episodes.find(e => e.number === epNum) || anime.episodes[0];
   const durSec = parseDurationToSeconds(ep.duration);
@@ -999,7 +1225,6 @@ function handleVideoTimeUpdate(animeId, epNum) {
   const cur = Math.floor(video.currentTime);
   const dur = Math.floor(video.duration) || 1440;
 
-  // Hanya perbarui setiap 5 detik untuk efisiensi
   if (cur % 5 === 0 && cur > 0) {
     let item = state.continueWatching.find(i => i.animeId === animeId && i.episodeNum === epNum);
     if (item) {
@@ -1108,9 +1333,9 @@ function handleCommentSubmit(event, animeId, episodeNum) {
 }
 
 // ==========================================================================
-// 3. RENDER CATALOG & FILTER PAGE
+// 3. RENDER CATALOG & FILTER PAGE (Dengan Pencarian Real-time Jikan API)
 // ==========================================================================
-function renderCatalogPage() {
+async function renderCatalogPage() {
   const container = document.getElementById('main-content');
 
   const allGenres = ['Action', 'Romance', 'Isekai', 'Fantasy', 'Adventure', 'Supernatural', 'Comedy', 'Drama'];
@@ -1124,7 +1349,7 @@ function renderCatalogPage() {
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
             </svg>
-            Katalog & Pencarian Anime Berlisensi
+            Katalog & Pencarian Anime (Terhubung Jikan API v4)
           </h1>
           <button class="btn-reset-filter" onclick="resetFilters()">
             Reset Filter
@@ -1132,6 +1357,16 @@ function renderCatalogPage() {
         </div>
 
         <div class="filter-grid">
+          <!-- Filter Sumber Data -->
+          <div class="filter-group">
+            <label class="filter-label" for="filter-source">Sumber Data</label>
+            <select id="filter-source" class="filter-select" onchange="applyFilters()">
+              <option value="all" ${state.filters.source === 'all' ? 'selected' : ''}>Semua Sumber (Lokal + Jikan API)</option>
+              <option value="local" ${state.filters.source === 'local' ? 'selected' : ''}>Koleksi Berlisensi ID Sah</option>
+              <option value="jikan" ${state.filters.source === 'jikan' ? 'selected' : ''}>Jikan API v4 (MyAnimeList Global)</option>
+            </select>
+          </div>
+
           <!-- Filter Genre -->
           <div class="filter-group">
             <label class="filter-label" for="filter-genre">Genre</label>
@@ -1159,71 +1394,103 @@ function renderCatalogPage() {
               <option value="Movie" ${state.filters.type === 'Movie' ? 'selected' : ''}>Film Layar Lebar</option>
             </select>
           </div>
-
-          <!-- Filter Status -->
-          <div class="filter-group">
-            <label class="filter-label" for="filter-status">Status</label>
-            <select id="filter-status" class="filter-select" onchange="applyFilters()">
-              <option value="all">Semua Status</option>
-              <option value="Ongoing" ${state.filters.status === 'Ongoing' ? 'selected' : ''}>Ongoing</option>
-              <option value="Tamat" ${state.filters.status === 'Tamat' ? 'selected' : ''}>Tamat</option>
-            </select>
-          </div>
         </div>
+
+        ${state.filters.search ? `
+          <div style="margin-top: 1rem; display: flex; align-items: center; justify-content: space-between; background: var(--bg-surface-elevated); padding: 0.5rem 0.85rem; border-radius: var(--radius-sm);">
+            <span style="font-size: 0.85rem; color: var(--text-muted);">
+              Mencari: <strong style="color: var(--accent-hover);">"${state.filters.search}"</strong> (Mencari di Database Lokal & Jikan API)
+            </span>
+            <button onclick="clearSearchFilter()" class="footer-link-btn" style="font-size: 0.8rem; color: var(--text-subtle);">
+              Hapus Pencarian &times;
+            </button>
+          </div>
+        ` : ''}
       </div>
+
+      <!-- Status Info Jikan Search -->
+      <div id="catalog-jikan-status" style="margin-bottom: 1rem; display: none;"></div>
 
       <!-- Hasil Grid Katalog -->
       <div class="catalog-grid" id="catalog-results-grid">
-        <!-- Dirender oleh renderFilteredCatalog() -->
+        <div style="grid-column: 1 / -1; text-align: center; padding: 3rem; color: var(--text-muted);">
+          <div class="api-pulse-dot" style="margin: 0 auto 0.75rem auto;"></div>
+          <p>Memuat katalog anime...</p>
+        </div>
       </div>
     </div>
   `;
 
-  renderFilteredCatalog();
+  await executeCatalogSearch();
 }
 
-function applyFilters() {
-  const genreSelect = document.getElementById('filter-genre');
-  const yearSelect = document.getElementById('filter-year');
-  const typeSelect = document.getElementById('filter-type');
-  const statusSelect = document.getElementById('filter-status');
-
-  if (genreSelect) state.filters.genre = genreSelect.value;
-  if (yearSelect) state.filters.year = yearSelect.value;
-  if (typeSelect) state.filters.type = typeSelect.value;
-  if (statusSelect) state.filters.status = statusSelect.value;
-
-  renderFilteredCatalog();
-}
-
-function renderFilteredCatalog() {
+async function executeCatalogSearch() {
   const grid = document.getElementById('catalog-results-grid');
+  const statusEl = document.getElementById('catalog-jikan-status');
   if (!grid) return;
 
-  const filtered = ANIME_DATABASE.filter(anime => {
-    if (state.filters.genre !== 'all' && !anime.genres.map(g => g.toLowerCase()).includes(state.filters.genre.toLowerCase())) {
-      return false;
+  let localMatches = [];
+  if (state.filters.source !== 'jikan') {
+    localMatches = ANIME_DATABASE.filter(anime => {
+      if (state.filters.genre !== 'all' && !anime.genres.map(g => g.toLowerCase()).includes(state.filters.genre.toLowerCase())) {
+        return false;
+      }
+      if (state.filters.year !== 'all' && anime.year.toString() !== state.filters.year) {
+        return false;
+      }
+      if (state.filters.type !== 'all' && anime.type !== state.filters.type) {
+        return false;
+      }
+      if (state.filters.status !== 'all' && anime.status !== state.filters.status) {
+        return false;
+      }
+      if (state.filters.search) {
+        const q = state.filters.search.toLowerCase();
+        const matchTitle = anime.title.toLowerCase().includes(q);
+        const matchJap = anime.japaneseTitle.toLowerCase().includes(q);
+        const matchGenre = anime.genres.some(g => g.toLowerCase().includes(q));
+        if (!matchTitle && !matchJap && !matchGenre) return false;
+      }
+      return true;
+    });
+  }
+
+  // Jika ada kata kunci pencarian atau memilih sumber Jikan, lakukan query ke Jikan API
+  let jikanMatches = [];
+  if (state.filters.source !== 'local') {
+    if (state.filters.search && state.filters.search.trim().length > 0) {
+      if (statusEl) {
+        statusEl.style.display = 'block';
+        statusEl.innerHTML = `<span style="font-size: 0.8rem; color: var(--info);">Menghubungi Jikan API v4 untuk kata kunci "${state.filters.search}"...</span>`;
+      }
+      try {
+        jikanMatches = await JikanService.searchAnime(state.filters.search, 12);
+        state.jikanSearchResults = jikanMatches;
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="font-size: 0.8rem; color: var(--success);">Berhasil menemukan ${jikanMatches.length} anime tambahan dari Jikan API v4.</span>`;
+        }
+      } catch (e) {
+        if (statusEl) {
+          statusEl.innerHTML = `<span style="font-size: 0.8rem; color: var(--text-muted);">Pencarian Jikan API menggunakan data lokal.</span>`;
+        }
+      }
+    } else if (state.filters.source === 'jikan') {
+      if (state.jikanTopAnime.length === 0) {
+        state.jikanTopAnime = await JikanService.getTopAnime(12);
+      }
+      jikanMatches = state.jikanTopAnime;
     }
-    if (state.filters.year !== 'all' && anime.year.toString() !== state.filters.year) {
-      return false;
+  }
+
+  // Gabungkan hasil pencarian dengan deduplikasi
+  const combined = [...localMatches];
+  jikanMatches.forEach(jAnime => {
+    if (!combined.some(c => c.id === jAnime.id || c.title.toLowerCase() === jAnime.title.toLowerCase())) {
+      combined.push(jAnime);
     }
-    if (state.filters.type !== 'all' && anime.type !== state.filters.type) {
-      return false;
-    }
-    if (state.filters.status !== 'all' && anime.status !== state.filters.status) {
-      return false;
-    }
-    if (state.filters.search) {
-      const q = state.filters.search.toLowerCase();
-      const matchTitle = anime.title.toLowerCase().includes(q);
-      const matchJap = anime.japaneseTitle.toLowerCase().includes(q);
-      const matchGenre = anime.genres.some(g => g.toLowerCase().includes(q));
-      if (!matchTitle && !matchJap && !matchGenre) return false;
-    }
-    return true;
   });
 
-  if (filtered.length === 0) {
+  if (combined.length === 0) {
     grid.innerHTML = `
       <div style="grid-column: 1 / -1; text-align: center; padding: 4rem 1rem; color: var(--text-muted);">
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 1rem; color: var(--text-subtle);">
@@ -1231,13 +1498,13 @@ function renderFilteredCatalog() {
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
         <h3 style="color: var(--text-main); font-size: 1.2rem; margin-bottom: 0.5rem;">Tidak Ada Anime Ditemukan</h3>
-        <p style="font-size: 0.9rem;">Coba sesuaikan kombinasi filter atau gunakan kata kunci pencarian lain.</p>
+        <p style="font-size: 0.9rem;">Coba sesuaikan kata kunci atau gunakan filter genre lain.</p>
       </div>
     `;
     return;
   }
 
-  grid.innerHTML = filtered.map(anime => `
+  grid.innerHTML = combined.map(anime => `
     <div class="catalog-card" tabindex="0">
       <div class="catalog-card-image-box">
         <img src="${anime.poster}" alt="${anime.title}" class="catalog-card-img" loading="lazy" />
@@ -1252,7 +1519,12 @@ function renderFilteredCatalog() {
 
       <div class="catalog-card-content">
         <h3 class="catalog-card-title" title="${anime.title}">${anime.title}</h3>
-        <p class="catalog-card-meta">${anime.year} • ${anime.genres[0]} • <span style="color: var(--success);">Resmi</span></p>
+        <p class="catalog-card-meta">
+          ${anime.year} • ${anime.genres[0] || 'Anime'} • 
+          <span style="color: ${anime.id.startsWith('mal_') ? 'var(--info)' : 'var(--success)'};">
+            ${anime.id.startsWith('mal_') ? 'Jikan v4' : 'Resmi ID'}
+          </span>
+        </p>
       </div>
 
       <!-- Hover Popover Details -->
@@ -1264,7 +1536,7 @@ function renderFilteredCatalog() {
           <span>${anime.status}</span>
         </div>
         <div class="popover-genres">
-          ${anime.genres.map(g => `<span class="genre-tag">${g}</span>`).join('')}
+          ${anime.genres.slice(0, 3).map(g => `<span class="genre-tag">${g}</span>`).join('')}
         </div>
         <p class="popover-synopsis">${anime.synopsis}</p>
         <div style="margin-top: 0.85rem;">
@@ -1277,28 +1549,50 @@ function renderFilteredCatalog() {
   `).join('');
 }
 
+function applyFilters() {
+  const sourceSelect = document.getElementById('filter-source');
+  const genreSelect = document.getElementById('filter-genre');
+  const yearSelect = document.getElementById('filter-year');
+  const typeSelect = document.getElementById('filter-type');
+
+  if (sourceSelect) state.filters.source = sourceSelect.value;
+  if (genreSelect) state.filters.genre = genreSelect.value;
+  if (yearSelect) state.filters.year = yearSelect.value;
+  if (typeSelect) state.filters.type = typeSelect.value;
+
+  executeCatalogSearch();
+}
+
+function clearSearchFilter() {
+  state.filters.search = '';
+  const searchInput = document.getElementById('navbar-search-input');
+  if (searchInput) searchInput.value = '';
+  executeCatalogSearch();
+}
+
 function resetFilters() {
   state.filters = {
     genre: 'all',
     year: 'all',
     type: 'all',
     status: 'all',
+    source: 'all',
     search: ''
   };
 
+  const sourceSelect = document.getElementById('filter-source');
   const genreSelect = document.getElementById('filter-genre');
   const yearSelect = document.getElementById('filter-year');
   const typeSelect = document.getElementById('filter-type');
-  const statusSelect = document.getElementById('filter-status');
   const searchInput = document.getElementById('navbar-search-input');
 
+  if (sourceSelect) sourceSelect.value = 'all';
   if (genreSelect) genreSelect.value = 'all';
   if (yearSelect) yearSelect.value = 'all';
   if (typeSelect) typeSelect.value = 'all';
-  if (statusSelect) statusSelect.value = 'all';
   if (searchInput) searchInput.value = '';
 
-  applyFilters();
+  executeCatalogSearch();
 }
 
 // ==========================================================================
@@ -1306,7 +1600,7 @@ function resetFilters() {
 // ==========================================================================
 function toggleBookmark(animeId, btnElement) {
   const index = state.bookmarks.indexOf(animeId);
-  const anime = ANIME_DATABASE.find(a => a.id === animeId);
+  const anime = findAnimeById(animeId);
   const animeTitle = anime ? anime.title : 'Anime';
 
   if (index > -1) {
@@ -1341,7 +1635,7 @@ function renderBookmarkDrawerList() {
   const drawerBody = document.getElementById('bookmarks-drawer-body');
   if (!drawerBody) return;
 
-  const bookmarkedAnimeList = ANIME_DATABASE.filter(a => state.bookmarks.includes(a.id));
+  const bookmarkedAnimeList = state.bookmarks.map(id => findAnimeById(id)).filter(Boolean);
 
   if (bookmarkedAnimeList.length === 0) {
     drawerBody.innerHTML = `
@@ -1362,7 +1656,10 @@ function renderBookmarkDrawerList() {
       <div style="flex: 1; overflow: hidden;">
         <h4 style="font-size: 0.9rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${anime.title}</h4>
         <div style="font-size: 0.75rem; color: var(--text-subtle); margin: 0.2rem 0;">
-          ★ ${anime.rating} • ${anime.genres[0]} • <span style="color: var(--success);">Resmi</span>
+          ★ ${anime.rating} • ${anime.genres[0] || 'Anime'} • 
+          <span style="color: ${anime.id.startsWith('mal_') ? 'var(--info)' : 'var(--success)'};">
+            ${anime.id.startsWith('mal_') ? 'Jikan v4' : 'Resmi ID'}
+          </span>
         </div>
         <a href="#watch?id=${anime.id}&ep=1" onclick="document.getElementById('bookmarks-modal').classList.remove('open')" style="color: var(--accent-primary); font-size: 0.8rem; font-weight: 600;">
           Tonton Episode 1

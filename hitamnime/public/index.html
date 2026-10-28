@@ -92,8 +92,14 @@
         </button>
       </nav>
 
-      <!-- Aksi Header: Pencarian, Akun, Bookmark, Menu Mobile -->
+      <!-- Aksi Header: Status API, Pencarian, Akun, Bookmark, Menu Mobile -->
       <div class="header-actions">
+        <!-- Status Indikator Jikan API v4 -->
+        <div class="api-status-pill" id="api-status-indicator" title="Terhubung ke Jikan API v4 (MyAnimeList)">
+          <span class="api-pulse-dot"></span>
+          <span class="api-status-text">Jikan API</span>
+        </div>
+
         <!-- Kolom Pencarian -->
         <div class="search-box">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -103,8 +109,8 @@
           <input 
             type="text" 
             id="navbar-search-input" 
-            placeholder="Cari anime..." 
-            aria-label="Cari anime"
+            placeholder="Cari anime via Jikan API..." 
+            aria-label="Cari anime via Jikan API"
             autocomplete="off"
           />
         </div>
@@ -467,7 +473,9 @@
 
   <!-- Scripts -->
   <script src="js/data.js"></script>
+  <script src="js/jikan-api.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
+
 
